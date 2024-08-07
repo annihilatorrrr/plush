@@ -1,10 +1,10 @@
 package plush
 
 import (
-	"bytes"
 	"fmt"
+	"unsafe"
 
-	"github.com/gobuffalo/plush/v4/token"
+	"github.com/gobuffalo/plush/v5/token"
 
 	"html/template"
 	"reflect"
@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gobuffalo/helpers/hctx"
-	"github.com/gobuffalo/plush/v4/ast"
+	"github.com/gobuffalo/plush/v5/ast"
+	"github.com/gobuffalo/plush/v5/helpers/hctx"
 )
 
 type ErrUnknownIdentifier struct {
@@ -36,7 +36,7 @@ type compiler struct {
 }
 
 func (c *compiler) compile() (string, error) {
-	bb := &bytes.Buffer{}
+	bb := &strings.Builder{}
 
 	for _, stmt := range c.program.Statements {
 		var res interface{}
@@ -70,28 +70,28 @@ func (c *compiler) compile() (string, error) {
 	return bb.String(), nil
 }
 
-func (c *compiler) write(bb *bytes.Buffer, i interface{}) {
+func (c *compiler) write(bb *strings.Builder, i interface{}) {
 	switch t := i.(type) {
 	case time.Time:
 		if dtf, ok := c.ctx.Value("TIME_FORMAT").(string); ok {
-			bb.WriteString(t.Format(dtf))
+			bb.Write(unsafeGetBytes(t.Format(dtf)))
 			return
 		}
-		bb.WriteString(t.Format(DefaultTimeFormat))
+		bb.Write(unsafeGetBytes(t.Format(DefaultTimeFormat)))
 	case *time.Time:
 		c.write(bb, *t)
 	case interfaceable:
 		c.write(bb, t.Interface())
 	case string, ast.Printable, bool:
-		bb.WriteString(template.HTMLEscaper(t))
+		bb.Write(unsafeGetBytes(template.HTMLEscaper(t)))
 	case template.HTML:
-		bb.WriteString(string(t))
+		bb.Write(unsafeGetBytes(string(t)))
 	case HTMLer:
-		bb.WriteString(string(t.HTML()))
+		bb.Write(unsafeGetBytes(string(t.HTML())))
 	case uint, uint8, uint16, uint32, uint64, int, int8, int16, int32, int64, float32, float64:
-		bb.WriteString(fmt.Sprint(t))
+		bb.Write(unsafeGetBytes(fmt.Sprint(t)))
 	case fmt.Stringer:
-		bb.WriteString(t.String())
+		bb.Write(unsafeGetBytes(t.String()))
 	case []string:
 		for _, ii := range t {
 			c.write(bb, ii)
@@ -340,9 +340,10 @@ func (c *compiler) evalAccessIndex(left, index interface{}, node *ast.IndexExpre
 		}
 	case reflect.Array, reflect.Slice:
 		if i, ok := index.(int); ok {
-			if i < 0 || i >= rv.Len() {
+			if rv.Len()-1 < i {
 				err = fmt.Errorf("array index out of bounds, got index %d, while array size is %d", index, rv.Len())
 			} else {
+
 				if node.Callee != nil {
 					returnValue, err = c.evalIndexCallee(rv.Index(i), node)
 				} else {
@@ -1090,4 +1091,11 @@ func (c *compiler) evalIndexCallee(rv reflect.Value, node *ast.IndexExpression) 
 	}
 
 	return vvs, nil
+}
+
+func unsafeGetBytes(s string) []byte {
+	if s == "" {
+		return []byte{}
+	}
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
